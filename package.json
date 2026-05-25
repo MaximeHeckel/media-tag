@@ -4,11 +4,13 @@
   "description": "Tag local video and image assets with AI-generated metadata keywords.",
   "type": "module",
   "bin": {
-    "tagger": "./dist/index.js"
+    "media-tagger": "./dist/index.js"
   },
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
+    "compile": "bun build ./src/index.ts --compile --outfile media-tagger",
+    "install:local": "pnpm compile && sudo install -m 755 ./media-tagger /usr/local/bin/media-tagger",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "exif": "exiftool -G1 -a -s",
