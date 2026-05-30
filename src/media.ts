@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { globby } from "globby";
+import { z } from "zod";
 import { runCommand } from "./process.js";
 
 export const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".mkv"]);
@@ -22,6 +23,10 @@ export type ExtractedFrames = {
   framePaths: string[];
   tempDir: string;
 };
+
+const AudioStreamProbeSchema = z.object({
+  streams: z.array(z.unknown()).default([]),
+});
 
 export function getMediaKind(filePath: string): MediaKind | undefined {
   const ext = path.extname(filePath).toLowerCase();
@@ -129,6 +134,34 @@ export async function getVideoDurationSeconds(
   }
 
   return duration;
+}
+
+export async function videoHasAudioStream(
+  filePath: string,
+  verbose = false,
+): Promise<boolean> {
+  const { stdout } = await runCommand(
+    "ffprobe",
+    [
+      "-v",
+      "error",
+      "-select_streams",
+      "a",
+      "-show_entries",
+      "stream=index",
+      "-of",
+      "json",
+      filePath,
+    ],
+    { verbose },
+  );
+
+  return parseVideoHasAudioStream(stdout);
+}
+
+export function parseVideoHasAudioStream(ffprobeJson: string): boolean {
+  const parsed = AudioStreamProbeSchema.parse(JSON.parse(ffprobeJson));
+  return parsed.streams.length > 0;
 }
 
 export async function extractVideoFrames(

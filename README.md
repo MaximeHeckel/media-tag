@@ -10,6 +10,7 @@ The tool extracts visual context from media, asks a multimodal model for semanti
 - Tags videos: `.mp4`, `.mov`, `.mkv`
 - Accepts files, directories, and glob patterns
 - Extracts 25%, 50%, and 75% video frames using fast ffmpeg input seeking
+- Adds searchable video audio tokens based on audio-track detection
 - Uses Vercel AI SDK with OpenAI by default
 - Validates LLM input and output with Zod
 - Writes metadata in place with ExifTool using `-overwrite_original`
@@ -114,6 +115,11 @@ Videos:
 
 - `Keys:Description`
 - `XMP:Description`
+
+Video tags also include one audio state pair:
+
+- `has sound`, `has-audio` when ffprobe detects any audio stream
+- `no sound`, `no-audio` when no audio stream is detected
 
 Images:
 

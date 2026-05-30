@@ -7,11 +7,13 @@ import ora from "ora";
 import pLimit from "p-limit";
 import pc from "picocolors";
 import { inferKeywordsFromImages } from "./ai.js";
+import { appendAudioKeywords } from "./keywords.js";
 import {
   type MediaAsset,
   extractVideoFrames,
   removeExtractedFrames,
   resolveInputAssets,
+  videoHasAudioStream,
 } from "./media.js";
 import { cleanMetadata, embedMetadata } from "./metadata.js";
 import { assertCommandAvailable } from "./process.js";
@@ -139,9 +141,16 @@ async function tagAsset(
       tempDir = path.dirname(imageReferences[0]);
     }
 
-    const keywords = await inferKeywordsFromImages(imageReferences, {
+    const inferredKeywords = await inferKeywordsFromImages(imageReferences, {
       model: options.model,
     });
+    const keywords =
+      asset.kind === "video"
+        ? appendAudioKeywords(
+            inferredKeywords,
+            await videoHasAudioStream(asset.path, options.verbose),
+          )
+        : inferredKeywords;
 
     if (!options.dryRun) {
       await embedMetadata(asset.path, keywords, {

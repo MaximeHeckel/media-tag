@@ -3,6 +3,7 @@ import {
   calculateFrameTimestamps,
   getMediaKind,
   isSupportedMediaFile,
+  parseVideoHasAudioStream,
 } from "../src/media.js";
 
 describe("media helpers", () => {
@@ -28,5 +29,10 @@ describe("media helpers", () => {
     expect(() => calculateFrameTimestamps(Number.NaN)).toThrow(
       "Invalid video duration",
     );
+  });
+
+  it("detects audio streams from ffprobe JSON", () => {
+    expect(parseVideoHasAudioStream('{"streams":[{"index":1}]}')).toBe(true);
+    expect(parseVideoHasAudioStream('{"streams":[]}')).toBe(false);
   });
 });
