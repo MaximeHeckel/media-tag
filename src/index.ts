@@ -44,7 +44,7 @@ type ProcessResult = {
 const program = new Command();
 
 program
-  .name("tagger")
+  .name("media-tagger")
   .description("Generate and manage AI metadata keywords for local videos and images.")
   .showHelpAfterError()
   .showSuggestionAfterError();
