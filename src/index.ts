@@ -20,6 +20,7 @@ import { assertCommandAvailable } from "./process.js";
 
 type TagOptions = {
   concurrency: number;
+  frames: number;
   model?: string;
   dryRun: boolean;
   reindex: boolean;
@@ -53,6 +54,7 @@ program
   .description("Generate AI keywords and write them to media metadata.")
   .argument("<inputs...>", "files, directories, or glob patterns to process")
   .option("-c, --concurrency <n>", "maximum active workers", parseConcurrency, 3)
+  .option("-f, --frames <n>", "number of video frames to extract for inference", parsePositiveInteger, 4)
   .option("--model <model>", "OpenAI model to use", process.env.OPENAI_MODEL)
   .option("--dry-run", "print keywords without writing metadata", false)
   .option("--no-reindex", "skip macOS Spotlight reindexing")
@@ -211,7 +213,11 @@ async function extractFramesForAsset(
   asset: MediaAsset,
   options: TagOptions,
 ): Promise<string[]> {
-  const { framePaths, tempDir } = await extractVideoFrames(asset.path, options.verbose);
+  const { framePaths, tempDir } = await extractVideoFrames(
+    asset.path,
+    options.verbose,
+    options.frames,
+  );
 
   if (options.keepFrames) {
     console.log(pc.dim(`Kept extracted frames in ${tempDir}`));
@@ -283,10 +289,14 @@ function handleFatalError(error: unknown): void {
 }
 
 function parseConcurrency(value: string): number {
+  return parsePositiveInteger(value);
+}
+
+function parsePositiveInteger(value: string): number {
   const concurrency = Number.parseInt(value, 10);
 
   if (!Number.isInteger(concurrency) || concurrency < 1) {
-    throw new InvalidArgumentError("Concurrency must be a positive integer.");
+    throw new InvalidArgumentError("Value must be a positive integer.");
   }
 
   return concurrency;

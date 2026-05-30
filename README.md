@@ -9,7 +9,7 @@ The tool extracts visual context from media, asks a multimodal model for semanti
 - Tags images: `.png`, `.jpg`, `.jpeg`, `.webp`
 - Tags videos: `.mp4`, `.mov`, `.mkv`
 - Accepts files, directories, and glob patterns
-- Extracts 25%, 50%, and 75% video frames using fast ffmpeg input seeking
+- Extracts 4 evenly spaced video frames by default using fast ffmpeg input seeking
 - Adds searchable video audio tokens based on audio-track detection
 - Uses Vercel AI SDK with OpenAI by default
 - Validates LLM input and output with Zod
@@ -80,6 +80,13 @@ pnpm dev tag ./downloads
 pnpm dev tag "./downloads/**/*.mp4"
 ```
 
+Use more video frames for inference:
+
+```bash
+pnpm dev tag ./path/to/video.mp4 --frames 8
+pnpm dev tag ./path/to/video.mp4 -f 8
+```
+
 Clean metadata fields written by this CLI:
 
 ```bash
@@ -93,6 +100,7 @@ pnpm dev clean ./path/to/image.jpg
 
 ```bash
 --concurrency <n>  Maximum active workers, defaults to 3
+--frames <n>       Number of video frames to extract, defaults to 4
 --model <model>    OpenAI model, defaults to OPENAI_MODEL or gpt-4o-mini
 --dry-run          Print keywords without writing metadata
 --no-reindex       Skip macOS Spotlight reindexing

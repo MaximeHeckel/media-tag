@@ -20,14 +20,26 @@ describe("media helpers", () => {
     expect(isSupportedMediaFile("asset.gif")).toBe(false);
   });
 
-  it("calculates 25, 50, and 75 percent frame timestamps", () => {
-    expect(calculateFrameTimestamps(120)).toEqual([30, 60, 90]);
+  it("calculates four evenly spaced frame timestamps by default", () => {
+    expect(calculateFrameTimestamps(120)).toEqual([24, 48, 72, 96]);
+  });
+
+  it("calculates evenly spaced timestamps for custom frame counts", () => {
+    expect(calculateFrameTimestamps(120, 5)).toEqual([20, 40, 60, 80, 100]);
+    expect(calculateFrameTimestamps(120, 1)).toEqual([60]);
   });
 
   it("rejects invalid video durations", () => {
     expect(() => calculateFrameTimestamps(0)).toThrow("Invalid video duration");
     expect(() => calculateFrameTimestamps(Number.NaN)).toThrow(
       "Invalid video duration",
+    );
+  });
+
+  it("rejects invalid frame counts", () => {
+    expect(() => calculateFrameTimestamps(120, 0)).toThrow("Invalid frame count");
+    expect(() => calculateFrameTimestamps(120, 1.5)).toThrow(
+      "Invalid frame count",
     );
   });
 

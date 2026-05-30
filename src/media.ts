@@ -46,12 +46,22 @@ export function isSupportedMediaFile(filePath: string): boolean {
   return getMediaKind(filePath) !== undefined;
 }
 
-export function calculateFrameTimestamps(durationSeconds: number): number[] {
+export function calculateFrameTimestamps(
+  durationSeconds: number,
+  frameCount = 4,
+): number[] {
   if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
     throw new Error(`Invalid video duration: ${durationSeconds}`);
   }
 
-  return [0.25, 0.5, 0.75].map((ratio) => durationSeconds * ratio);
+  if (!Number.isInteger(frameCount) || frameCount < 1) {
+    throw new Error(`Invalid frame count: ${frameCount}`);
+  }
+
+  return Array.from({ length: frameCount }, (_, index) => {
+    const ratio = (index + 1) / (frameCount + 1);
+    return durationSeconds * ratio;
+  });
 }
 
 export async function resolveInputAssets(inputs: string[]): Promise<MediaAsset[]> {
@@ -167,9 +177,10 @@ export function parseVideoHasAudioStream(ffprobeJson: string): boolean {
 export async function extractVideoFrames(
   filePath: string,
   verbose = false,
+  frameCount = 4,
 ): Promise<ExtractedFrames> {
   const duration = await getVideoDurationSeconds(filePath, verbose);
-  const timestamps = calculateFrameTimestamps(duration);
+  const timestamps = calculateFrameTimestamps(duration, frameCount);
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "media-tagger-"));
   await mkdir(tempDir, { recursive: true });
 
