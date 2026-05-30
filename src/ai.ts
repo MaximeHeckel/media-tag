@@ -51,14 +51,14 @@ export async function inferKeywordsFromImages(
     model: openai(input.model),
     schema: KeywordResponseSchema,
     system:
-      "You tag stock footage and images. Return concise, searchable lowercase keywords describing style, objects, colors, mood, composition, medium, and notable visual attributes.",
+      "You tag stock footage and images. Return concise, searchable lowercase keywords describing style, objects, colors, mood, composition, medium, notable visual attributes, art style, design style, design movement, era, and broader umbrella aesthetic terms when relevant. If prominent text is legible in the image or frames, include the main words or short phrases as keywords.",
     messages: [
       {
         role: "user",
         content: [
           {
             type: "text",
-            text: "Analyze these visual references and return 8 to 20 high-value metadata keywords.",
+            text: "Analyze these visual references and return 8 to 20 high-value metadata keywords. Include clearly legible on-screen text when it is prominent enough to help search for the asset. Prefer useful umbrella terms too, such as art direction, design movement, visual genre, medium, era, or aesthetic family.",
           },
           ...imageParts,
         ],
