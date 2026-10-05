@@ -22,7 +22,7 @@ describe("sanitizeKeywords", () => {
 
   it("caps keywords to a practical metadata size", () => {
     const keywords = Array.from({ length: 40 }, (_, index) => `keyword ${index}`);
-    expect(sanitizeKeywords(keywords)).toHaveLength(10);
+    expect(sanitizeKeywords(keywords)).toHaveLength(15);
   });
 
   it("rejects empty keyword payloads", () => {
@@ -107,12 +107,12 @@ describe("Gemini media inference", () => {
 
   it("preserves descriptive audio terms alongside the visual keyword budget", async () => {
     mocks.generateContent.mockResolvedValue({ text: JSON.stringify({
-      keywords: Array.from({ length: 10 }, (_, index) => `visual ${index}`),
+      keywords: Array.from({ length: 15 }, (_, index) => `visual ${index}`),
       audio: { hasAudio: true, hasMusic: true, keywords: [" Soft Piano ", "soft piano", "slow instrumental music"] },
     }) });
     const keywords = await inferKeywordsFromMedia("/tmp/clip.mp4", { apiKey: "test-key" });
-    expect(keywords).toContain("visual 9");
-    expect(keywords.slice(10)).toEqual(["has-audio", "has-music", "soft piano", "slow instrumental music"]);
+    expect(keywords).toContain("visual 14");
+    expect(keywords.slice(15)).toEqual(["has-audio", "has-music", "soft piano", "slow instrumental music"]);
   });
 
   it("tags audible non-music content without inventing music", async () => {

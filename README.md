@@ -67,7 +67,7 @@ Run `media-tag --version` to print the version. Help menus also display it.
 
 ## Metadata
 
-Each asset receives up to 10 visual keywords. Videos also receive `has-audio` / `no-audio`, `has-music` / `no-music`, and up to 5 free-form descriptions of audible content. These audio judgments come from Gemini; a silent track counts as no audio.
+Each asset receives up to 15 relevant visual keywords, with fewer returned when appropriate. Videos also receive `has-audio` / `no-audio`, `has-music` / `no-music`, and up to 5 free-form descriptions of audible content. These audio judgments come from Gemini; a silent track counts as no audio.
 
 | Assets | Fields written and cleared |
 | --- | --- |
@@ -109,15 +109,3 @@ media-tag inspect ./downloads
 The installation command uses `sudo` and may prompt for your password.
 
 The executable bundles the runtime and JavaScript dependencies. ExifTool must still be installed; Spotlight integration uses the system's `mdimport` on macOS.
-
-## npm Packaging
-
-`npm pack` builds the JavaScript automatically and packages `dist/`, the README, and package metadata. The standalone executable, local `.env`, and media assets are excluded.
-
-Preview the package contents before publishing:
-
-```bash
-npm pack --dry-run
-```
-
-The npm executable is named `media-tag` and points to `dist/src/index.js`. Registry publication is a separate step.
