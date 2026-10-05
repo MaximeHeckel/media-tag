@@ -8,3 +8,5 @@ coverage/
 !.env.example
 assets/
 media-tagger
+/media-tag
+/*.tgz

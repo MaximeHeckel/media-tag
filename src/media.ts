@@ -1,11 +1,9 @@
-import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { globby } from "globby";
-import { z } from "zod";
-import { runCommand } from "./process.js";
 
-export const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".mkv"]);
+export const VIDEO_EXTENSIONS = new Set([".mp4", ".mov"]);
 export const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 export const SUPPORTED_EXTENSIONS = new Set([
   ...VIDEO_EXTENSIONS,
@@ -18,15 +16,6 @@ export type MediaAsset = {
   path: string;
   kind: MediaKind;
 };
-
-export type ExtractedFrames = {
-  framePaths: string[];
-  tempDir: string;
-};
-
-const AudioStreamProbeSchema = z.object({
-  streams: z.array(z.unknown()).default([]),
-});
 
 export function getMediaKind(filePath: string): MediaKind | undefined {
   const ext = path.extname(filePath).toLowerCase();
@@ -44,24 +33,6 @@ export function getMediaKind(filePath: string): MediaKind | undefined {
 
 export function isSupportedMediaFile(filePath: string): boolean {
   return getMediaKind(filePath) !== undefined;
-}
-
-export function calculateFrameTimestamps(
-  durationSeconds: number,
-  frameCount = 4,
-): number[] {
-  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
-    throw new Error(`Invalid video duration: ${durationSeconds}`);
-  }
-
-  if (!Number.isInteger(frameCount) || frameCount < 1) {
-    throw new Error(`Invalid frame count: ${frameCount}`);
-  }
-
-  return Array.from({ length: frameCount }, (_, index) => {
-    const ratio = (index + 1) / (frameCount + 1);
-    return durationSeconds * ratio;
-  });
 }
 
 export async function resolveInputAssets(inputs: string[]): Promise<MediaAsset[]> {
@@ -120,102 +91,22 @@ export async function resolveInputAssets(inputs: string[]): Promise<MediaAsset[]
   });
 }
 
-export async function getVideoDurationSeconds(
-  filePath: string,
-  verbose = false,
-): Promise<number> {
-  const { stdout } = await runCommand(
-    "ffprobe",
-    [
-      "-v",
-      "error",
-      "-show_entries",
-      "format=duration",
-      "-of",
-      "default=noprint_wrappers=1:nokey=1",
-      filePath,
-    ],
-    { verbose },
-  );
-
-  const duration = Number.parseFloat(stdout.trim());
-  if (!Number.isFinite(duration) || duration <= 0) {
-    throw new Error(`Unable to read video duration for ${filePath}`);
+export function getMediaMimeType(filePath: string): string {
+  switch (path.extname(filePath).toLowerCase()) {
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".png":
+      return "image/png";
+    case ".webp":
+      return "image/webp";
+    case ".mp4":
+      return "video/mp4";
+    case ".mov":
+      return "video/mov";
+    default:
+      throw new Error(`Unsupported Gemini media format: ${filePath}`);
   }
-
-  return duration;
-}
-
-export async function videoHasAudioStream(
-  filePath: string,
-  verbose = false,
-): Promise<boolean> {
-  const { stdout } = await runCommand(
-    "ffprobe",
-    [
-      "-v",
-      "error",
-      "-select_streams",
-      "a",
-      "-show_entries",
-      "stream=index",
-      "-of",
-      "json",
-      filePath,
-    ],
-    { verbose },
-  );
-
-  return parseVideoHasAudioStream(stdout);
-}
-
-export function parseVideoHasAudioStream(ffprobeJson: string): boolean {
-  const parsed = AudioStreamProbeSchema.parse(JSON.parse(ffprobeJson));
-  return parsed.streams.length > 0;
-}
-
-export async function extractVideoFrames(
-  filePath: string,
-  verbose = false,
-  frameCount = 4,
-): Promise<ExtractedFrames> {
-  const duration = await getVideoDurationSeconds(filePath, verbose);
-  const timestamps = calculateFrameTimestamps(duration, frameCount);
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), "media-tagger-"));
-  await mkdir(tempDir, { recursive: true });
-
-  try {
-    const framePaths: string[] = [];
-    for (const [index, timestamp] of timestamps.entries()) {
-      const outputPath = path.join(tempDir, `frame-${index + 1}.jpg`);
-      await runCommand(
-        "ffmpeg",
-        [
-          "-ss",
-          formatTimestamp(timestamp),
-          "-i",
-          filePath,
-          "-vframes",
-          "1",
-          "-q:v",
-          "2",
-          outputPath,
-          "-y",
-        ],
-        { verbose },
-      );
-      framePaths.push(outputPath);
-    }
-
-    return { framePaths, tempDir };
-  } catch (error) {
-    await removeExtractedFrames(tempDir);
-    throw error;
-  }
-}
-
-export async function removeExtractedFrames(tempDir: string): Promise<void> {
-  await rm(tempDir, { recursive: true, force: true });
 }
 
 function expandHome(input: string): string {
@@ -228,8 +119,4 @@ function expandHome(input: string): string {
   }
 
   return input;
-}
-
-function formatTimestamp(seconds: number): string {
-  return seconds.toFixed(3);
 }

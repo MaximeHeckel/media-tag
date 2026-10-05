@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCleanMetadataArgs, buildExiftoolArgs } from "../src/metadata.js";
+import { buildCleanMetadataArgs, buildExiftoolArgs, buildInspectMetadataArgs, parseMetadataRows } from "../src/metadata.js";
 
 describe("buildExiftoolArgs", () => {
   it("builds in-place video metadata args", () => {
@@ -52,5 +52,42 @@ describe("buildCleanMetadataArgs", () => {
     expect(() => buildCleanMetadataArgs("/tmp/file.txt")).toThrow(
       "Unsupported file extension",
     );
+  });
+});
+
+describe("metadata inspection", () => {
+  it("reads all grouped metadata without write arguments", () => {
+    expect(buildInspectMetadataArgs("/tmp/clip.mov")).toEqual([
+      "-json", "-G1:4", "-s", "/tmp/clip.mov",
+    ]);
+  });
+
+  it("selects the correct keyword fields for images and videos", () => {
+    expect(buildInspectMetadataArgs("/tmp/image.webp", { keywords: true })).toEqual([
+      "-json", "-G1:4", "-s", "-IPTC:Keywords", "-XMP:Subject", "/tmp/image.webp",
+    ]);
+    expect(buildInspectMetadataArgs("/tmp/clip.mp4", { keywords: true })).toEqual([
+      "-json", "-G1:4", "-s", "-Keys:Description", "-XMP:Description", "/tmp/clip.mp4",
+    ]);
+  });
+
+  it("keeps same-name fields distinct and displays keyword lists", () => {
+    expect(parseMetadataRows(JSON.stringify([{
+      SourceFile: "/tmp/image.jpg",
+      "XMP-dc:Subject": ["neon blue", "camera orbit"],
+      "Keys:Description": "neon blue, camera orbit",
+      "XMP-dc:Description": "a rotating sphere",
+    }]))).toEqual([
+      { Group: "Keys", Field: "Description", Value: "neon blue, camera orbit" },
+      { Group: "XMP-dc", Field: "Description", Value: "a rotating sphere" },
+      { Group: "XMP-dc", Field: "Subject", Value: "neon blue, camera orbit" },
+    ]);
+  });
+
+  it("handles absent metadata and reports ExifTool errors", () => {
+    expect(parseMetadataRows('[{"SourceFile":"/tmp/image.jpg"}]')).toEqual([]);
+    expect(() => parseMetadataRows('[{"ExifTool:Error":"File not found"}]'))
+      .toThrow("File not found");
+    expect(() => parseMetadataRows("[]")).toThrow();
   });
 });

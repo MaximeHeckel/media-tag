@@ -1,217 +1,123 @@
-# media-tagger-cli
+# media-tag
 
-A minimalist CLI for tagging local stock footage, video clips, and images with AI-generated metadata keywords.
+Generate searchable keywords for local images and videos with AI, and inspect their embedded metadata.
 
-The tool extracts visual context from media, asks a multimodal model for semantic keywords, and writes those keywords into file metadata with ExifTool so they can be discovered by tools like macOS Spotlight, creative apps, and media indexers.
-
-## Features
-
-- Tags images: `.png`, `.jpg`, `.jpeg`, `.webp`
-- Tags videos: `.mp4`, `.mov`, `.mkv`
-- Accepts files, directories, and glob patterns
-- Extracts 4 evenly spaced video frames by default using fast ffmpeg input seeking
-- Adds searchable video audio tokens based on audio-track detection
-- Uses Vercel AI SDK with OpenAI by default
-- Validates LLM input and output with Zod
-- Writes metadata in place with ExifTool using `-overwrite_original`
-- Supports bounded concurrency, defaulting to 3 workers
-- Can clean only the metadata fields written by this CLI
-- Can compile to a portable Bun executable
-
-## Requirements
-
-- Node.js 20+
-- pnpm
-- Bun, only if compiling the portable executable
-- OpenAI API key
-- System binaries:
-  - `ffmpeg`
-  - `ffprobe`
-  - `exiftool`
-  - `mdimport` on macOS, already available by default
-
-On macOS:
-
-```bash
-brew install ffmpeg exiftool
-```
+media-tag uses Gemini Flash to analyze visual content and video audio, then embeds searchable keywords in your files using ExifTool.
 
 ## Setup
 
-Install dependencies:
+Requires Node.js 20+, pnpm 11.19.0 (pinned in `package.json`), and ExifTool. If pnpm is not installed, run `npm install -g pnpm@11.19.0`. On macOS:
 
 ```bash
+brew install exiftool
 pnpm install
-```
-
-Create a local env file:
-
-```bash
 cp .env.example .env
 ```
 
-Then set:
+Set your [Gemini API key](https://aistudio.google.com/api-keys) in `.env`:
 
-```bash
-OPENAI_API_KEY=your_api_key_here
-OPENAI_MODEL=gpt-4o-mini
+```dotenv
+GEMINI_API_KEY=your_api_key_here
+GEMINI_MODEL=gemini-3.8-flash
 ```
 
-The CLI automatically loads `.env` at startup.
+The CLI loads `.env` from your current working directory. `GEMINI_MODEL` is optional; the default is `gemini-3.8-flash`. Only `index` requires an API key.
 
-## Development Usage
+Supported formats: **PNG, JPG, JPEG, WebP, MP4, and MOV**. Commands accept files, directories (searched recursively), multiple inputs, and quoted globs.
 
-Preview generated tags without writing metadata:
+## Commands
 
-```bash
-pnpm dev tag ./path/to/image.jpg --dry-run
-```
-
-Tag a file:
+Generate keywords and write them to embedded metadata:
 
 ```bash
-pnpm dev tag ./path/to/image.jpg
+pnpm dev index ./downloads
+pnpm dev index ./image.jpg ./clip.mp4 --dry-run
+pnpm dev index "./downloads/**/*.mp4"
 ```
 
-Tag a directory or glob:
+Inspect keywords in one table, with each asset on its own row:
 
 ```bash
-pnpm dev tag ./downloads
-pnpm dev tag "./downloads/**/*.mp4"
+pnpm dev inspect ./downloads
+pnpm dev inspect ./image.jpg ./clip.mp4
+pnpm dev inspect ./clip.mp4 --all
 ```
 
-Use more video frames for inference:
+`--all` shows every available metadata field in a separate table per asset.
+
+Remove keyword metadata:
 
 ```bash
-pnpm dev tag ./path/to/video.mp4 --frames 8
-pnpm dev tag ./path/to/video.mp4 -f 8
+pnpm dev clean ./downloads --dry-run
+pnpm dev clean ./downloads
 ```
 
-Clean metadata fields written by this CLI:
+| Option | Commands | Behavior |
+| --- | --- | --- |
+| `--dry-run` | `index`, `clean` | Preview without modifying files |
+| `-c, --concurrency <n>` | `index`, `clean` | Concurrent workers; default: 3 |
+| `--model <model>` | `index` | Override the Gemini model |
+| `--no-reindex` | `index`, `clean` | Skip macOS Spotlight reindexing |
+| `--all` | `inspect` | Show full metadata per file |
+| `--keywords` | `inspect` | Show keyword metadata; the default |
+| `--verbose` | All | Print external command details |
+| `-h, --help` | All | Show command help |
 
-```bash
-pnpm dev clean ./path/to/image.jpg --dry-run
-pnpm dev clean ./path/to/image.jpg
-```
+Run `media-tag --version` to print the version. Help menus also display it.
 
-## CLI Options
+## Metadata
 
-`tag` options:
+Each asset receives up to 10 visual keywords. Videos also receive `has-audio` / `no-audio`, `has-music` / `no-music`, and up to 5 free-form descriptions of audible content. These audio judgments come from Gemini; a silent track counts as no audio.
 
-```bash
---concurrency <n>  Maximum active workers, defaults to 3
---frames <n>       Number of video frames to extract, defaults to 4
---model <model>    OpenAI model, defaults to OPENAI_MODEL or gpt-4o-mini
---dry-run          Print keywords without writing metadata
---no-reindex       Skip macOS Spotlight reindexing
---keep-frames      Keep extracted video frames for debugging
---verbose          Print external command details
-```
+| Assets | Fields written and cleared |
+| --- | --- |
+| Images | `IPTC:Keywords`, `XMP:Subject` |
+| Videos | `Keys:Description`, `XMP:Description` |
 
-`clean` options:
+`index` replaces the contents of these fields; `clean` clears them. Both modify the original file in place and request Spotlight reindexing through `mdimport` on macOS unless `--no-reindex` is set.
 
-```bash
---concurrency <n>  Maximum active workers, defaults to 3
---dry-run          Print files that would be cleaned without writing metadata
---no-reindex       Skip macOS Spotlight reindexing
---verbose          Print external command details
-```
+Analysis uploads media to Gemini. media-tag attempts to delete the uploaded file afterward, including when inference fails.
 
-## Metadata Fields
-
-Videos:
-
-- `Keys:Description`
-- `XMP:Description`
-
-Video tags also include one audio state pair:
-
-- `has sound`, `has-audio` when ffprobe detects any audio stream
-- `no sound`, `no-audio` when no audio stream is detected
-
-Images:
-
-- `IPTC:Keywords`
-- `XMP:Subject`
-
-`clean` only clears those fields. It does not wipe all EXIF, IPTC, or XMP metadata.
-
-## Inspect Metadata
-
-Show all metadata:
-
-```bash
-pnpm exif -- ./path/to/file
-```
-
-Show image tags written by this CLI:
-
-```bash
-pnpm exif:image -- ./path/to/image.jpg
-```
-
-Show video tags written by this CLI:
-
-```bash
-pnpm exif:video -- ./path/to/video.mp4
-```
-
-Check macOS Spotlight fields:
-
-```bash
-pnpm spotlight -- ./path/to/file
-```
-
-## Build
-
-Compile TypeScript to `dist`:
-
-```bash
-pnpm build
-```
-
-This is useful for checking the Node build, but it is not a standalone executable.
-
-## Portable Executable
-
-Compile a Bun executable:
-
-```bash
-pnpm compile
-```
-
-Run it locally:
-
-```bash
-./media-tagger tag ./path/to/image.jpg --dry-run
-./media-tagger clean ./path/to/image.jpg
-```
-
-Install it globally:
-
-```bash
-pnpm install:local
-```
-
-This installs:
-
-```bash
-/usr/local/bin/media-tagger
-```
-
-Then run:
-
-```bash
-media-tagger tag ./path/to/image.jpg --dry-run
-```
-
-The compiled binary includes the JavaScript runtime and bundled dependencies. It does not bundle `ffmpeg`, `ffprobe`, `exiftool`, or `mdimport`; those still need to be installed on the target machine.
-
-## Verification
-
-Run checks:
+## Development
 
 ```bash
 pnpm typecheck
 pnpm test
+pnpm build
 ```
+
+`pnpm build` compiles JavaScript to `dist/src/`. Run it with Node:
+
+```bash
+node dist/src/index.js inspect ./downloads
+```
+
+To build a standalone executable for your current operating system and architecture, install Bun and run:
+
+```bash
+pnpm compile
+./media-tag inspect ./downloads
+```
+
+To compile and install it as `media-tag` in `/usr/local/bin` on macOS:
+
+```bash
+pnpm install:local
+media-tag inspect ./downloads
+```
+
+The installation command uses `sudo` and may prompt for your password.
+
+The executable bundles the runtime and JavaScript dependencies. ExifTool must still be installed; Spotlight integration uses the system's `mdimport` on macOS.
+
+## npm Packaging
+
+`npm pack` builds the JavaScript automatically and packages `dist/`, the README, and package metadata. The standalone executable, local `.env`, and media assets are excluded.
+
+Preview the package contents before publishing:
+
+```bash
+npm pack --dry-run
+```
+
+The npm executable is named `media-tag` and points to `dist/src/index.js`. Registry publication is a separate step.

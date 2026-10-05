@@ -1,4 +1,5 @@
 import path from "node:path";
+import { z } from "zod";
 import { IMAGE_EXTENSIONS, VIDEO_EXTENSIONS } from "./media.js";
 import { runCommand } from "./process.js";
 
@@ -75,4 +76,77 @@ export async function cleanMetadata(
   if (options.reindex !== false && process.platform === "darwin") {
     await runCommand("mdimport", [filePath], { verbose: options.verbose });
   }
+}
+
+export type InspectMetadataOptions = {
+  keywords?: boolean;
+  verbose?: boolean;
+};
+
+export type MetadataRow = {
+  Group: string;
+  Field: string;
+  Value: string;
+};
+
+export function buildInspectMetadataArgs(
+  filePath: string,
+  options: InspectMetadataOptions = {},
+): string[] {
+  const ext = path.extname(filePath).toLowerCase();
+  if (!VIDEO_EXTENSIONS.has(ext) && !IMAGE_EXTENSIONS.has(ext)) {
+    throw new Error(`Unsupported file extension: ${ext}`);
+  }
+
+  // Group and instance identifiers keep identically named tags distinct in JSON.
+  const args = ["-json", "-G1:4", "-s"];
+  if (options.keywords) {
+    args.push(...(VIDEO_EXTENSIONS.has(ext)
+      ? ["-Keys:Description", "-XMP:Description"]
+      : ["-IPTC:Keywords", "-XMP:Subject"]));
+  }
+  args.push(filePath);
+  return args;
+}
+
+export async function inspectMetadata(
+  filePath: string,
+  options: InspectMetadataOptions = {},
+): Promise<MetadataRow[]> {
+  const { stdout } = await runCommand(
+    "exiftool", buildInspectMetadataArgs(filePath, options), { verbose: options.verbose },
+  );
+  return parseMetadataRows(stdout);
+}
+
+export function parseMetadataRows(exiftoolJson: string): MetadataRow[] {
+  const [metadata] = z.array(z.record(z.string(), z.unknown())).length(1)
+    .parse(JSON.parse(exiftoolJson));
+  const rows: MetadataRow[] = [];
+  for (const [key, value] of Object.entries(metadata)) {
+    if (key === "SourceFile") {
+      continue;
+    }
+    const separator = key.lastIndexOf(":");
+    const field = separator < 0 ? key : key.slice(separator + 1);
+    if (field === "Error") {
+      throw new Error(String(value));
+    }
+    rows.push({
+      Group: separator < 0 ? "—" : key.slice(0, separator),
+      Field: field,
+      Value: formatMetadataValue(value),
+    });
+  }
+  return rows.sort((a, b) => a.Group.localeCompare(b.Group) || a.Field.localeCompare(b.Field));
+}
+
+function formatMetadataValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map(formatMetadataValue).join(", ");
+  }
+  if (value !== null && typeof value === "object") {
+    return JSON.stringify(value);
+  }
+  return value === null ? "—" : String(value);
 }

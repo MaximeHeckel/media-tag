@@ -1,30 +1,26 @@
 #!/usr/bin/env node
 
 import "dotenv/config";
+import packageInfo from "../package.json" with { type: "json" };
 import path from "node:path";
 import { Command, InvalidArgumentError } from "commander";
 import ora from "ora";
 import pLimit from "p-limit";
 import pc from "picocolors";
-import { inferKeywordsFromImages } from "./ai.js";
-import { appendAudioKeywords } from "./keywords.js";
+import { inferKeywordsFromMedia } from "./ai.js";
 import {
   type MediaAsset,
-  extractVideoFrames,
-  removeExtractedFrames,
   resolveInputAssets,
-  videoHasAudioStream,
 } from "./media.js";
-import { cleanMetadata, embedMetadata } from "./metadata.js";
+import { cleanMetadata, embedMetadata, inspectMetadata, type InspectMetadataOptions } from "./metadata.js";
 import { assertCommandAvailable } from "./process.js";
+import { renderInspectionTable, type AssetInspectionRow } from "./table.js";
 
-type TagOptions = {
+type IndexOptions = {
   concurrency: number;
-  frames: number;
   model?: string;
   dryRun: boolean;
   reindex: boolean;
-  keepFrames: boolean;
   verbose: boolean;
 };
 
@@ -44,25 +40,25 @@ type ProcessResult = {
 const program = new Command();
 
 program
-  .name("media-tagger")
-  .description("Generate and manage AI metadata keywords for local videos and images.")
+  .name(packageInfo.name)
+  .description(packageInfo.description)
+  .version(packageInfo.version)
+  .addHelpText("beforeAll", `${packageInfo.name} v${packageInfo.version}\n`)
   .showHelpAfterError()
   .showSuggestionAfterError();
 
 program
-  .command("tag")
+  .command("index")
   .description("Generate AI keywords and write them to media metadata.")
   .argument("<inputs...>", "files, directories, or glob patterns to process")
   .option("-c, --concurrency <n>", "maximum active workers", parseConcurrency, 3)
-  .option("-f, --frames <n>", "number of video frames to extract for inference", parsePositiveInteger, 4)
-  .option("--model <model>", "OpenAI model to use", process.env.OPENAI_MODEL)
+  .option("--model <model>", "Gemini model to use", process.env.GEMINI_MODEL)
   .option("--dry-run", "print keywords without writing metadata", false)
   .option("--no-reindex", "skip macOS Spotlight reindexing")
-  .option("--keep-frames", "keep extracted video frames for debugging", false)
   .option("--verbose", "print external command details", false)
-  .action(async (inputs: string[], options: TagOptions) => {
+  .action(async (inputs: string[], options: IndexOptions) => {
     try {
-      await runTag(inputs, options);
+      await runIndex(inputs, options);
     } catch (error) {
       handleFatalError(error);
     }
@@ -70,7 +66,7 @@ program
 
 program
   .command("clean")
-  .description("Remove metadata fields written by the tag command.")
+  .description("Remove metadata fields written by the index command.")
   .argument("<inputs...>", "files, directories, or glob patterns to clean")
   .option("-c, --concurrency <n>", "maximum active workers", parseConcurrency, 3)
   .option("--dry-run", "print files that would be cleaned without writing metadata", false)
@@ -84,9 +80,24 @@ program
     }
   });
 
+program
+  .command("inspect")
+  .description("View image and video keyword metadata in an asset table.")
+  .argument("<inputs...>", "files, directories, or glob patterns to inspect")
+  .option("--keywords", "show generated keyword fields (the default)", false)
+  .option("--all", "show all metadata in a separate table for each asset", false)
+  .option("--verbose", "print external command details", false)
+  .action(async (inputs: string[], options: InspectMetadataOptions & { all: boolean }) => {
+    try {
+      await runInspect(inputs, options);
+    } catch (error) {
+      handleFatalError(error);
+    }
+  });
+
 await program.parseAsync();
 
-async function runTag(inputs: string[], options: TagOptions): Promise<void> {
+async function runIndex(inputs: string[], options: IndexOptions): Promise<void> {
   const discoverySpinner = ora("Resolving media inputs").start();
   const assets = await resolveInputAssets(inputs);
   discoverySpinner.succeed(`Resolved ${assets.length} supported asset(s)`);
@@ -96,11 +107,10 @@ async function runTag(inputs: string[], options: TagOptions): Promise<void> {
     return;
   }
 
-  await preflightTag(assets, options);
+  await preflightIndex(options);
 
-  const limit = pLimit(options.concurrency);
-  const results = await Promise.all(
-    assets.map((asset) => limit(() => tagAsset(asset, options))),
+  const results = await processBatch(assets, options, "Indexing", (asset) =>
+    indexAsset(asset, options),
   );
 
   reportResults(results);
@@ -118,41 +128,116 @@ async function runClean(inputs: string[], options: CleanOptions): Promise<void> 
 
   await preflightClean(options);
 
-  const limit = pLimit(options.concurrency);
-  const results = await Promise.all(
-    assets.map((asset) => limit(() => cleanAsset(asset, options))),
+  const results = await processBatch(assets, options, "Cleaning", (asset) =>
+    cleanAsset(asset, options),
   );
 
   reportResults(results);
 }
 
-async function tagAsset(
-  asset: MediaAsset,
-  options: TagOptions,
-): Promise<ProcessResult> {
-  const spinner = ora(`Processing ${formatPath(asset.path)}`).start();
-  let tempDir: string | undefined;
+async function runInspect(
+  inputs: string[],
+  options: InspectMetadataOptions & { all: boolean },
+): Promise<void> {
+  const assets = await resolveInputAssets(inputs);
+  if (assets.length === 0) {
+    console.log(pc.yellow("No supported media files found."));
+    return;
+  }
+
+  await assertCommandAvailable("exiftool");
+  const summary: AssetInspectionRow[] = [];
+  for (const asset of assets) {
+    try {
+      const rows = await inspectMetadata(asset.path, {
+        keywords: !options.all || options.keywords,
+        verbose: options.verbose,
+      });
+      if (options.all) {
+        console.log(pc.bold(`\n${formatPath(asset.path)} (${asset.kind})`));
+        if (rows.length === 0) {
+          console.log(pc.dim("No metadata found."));
+        } else {
+          console.table(rows, ["Group", "Field", "Value"]);
+        }
+      } else {
+        // The same keywords are stored in two fields. Display each tag once.
+        const tags = [...new Set(rows
+          .filter((row) => ["Keywords", "Subject", "Description"].includes(row.Field))
+          .flatMap((row) => row.Value.split(",")
+          .map((tag) => tag.trim()).filter(Boolean)))];
+        summary.push({
+          asset: formatPath(asset.path), kind: asset.kind,
+          tags: tags.length ? tags.join(", ") : "No keyword metadata",
+        });
+      }
+    } catch (error) {
+      console.error(`${pc.red("Failed")} ${formatPath(asset.path)}: ${error instanceof Error ? error.message : String(error)}`);
+      if (!options.all) {
+        summary.push({ asset: formatPath(asset.path), kind: asset.kind, tags: "Failed to read metadata" });
+      }
+      process.exitCode = 1;
+    }
+  }
+  if (!options.all) {
+    console.log(renderInspectionTable(summary, process.stdout.columns ?? 120));
+    console.log(pc.dim(`${assets.length} asset(s)`));
+  }
+}
+
+async function processBatch(
+  assets: MediaAsset[],
+  options: { concurrency: number; dryRun: boolean; verbose: boolean },
+  action: "Indexing" | "Cleaning",
+  processAsset: (asset: MediaAsset) => Promise<ProcessResult>,
+): Promise<ProcessResult[]> {
+  const limit = pLimit(options.concurrency);
+  let completed = 0;
+  const spinner = ora({
+    text: `${action} media: 0/${assets.length} completed`,
+    // Verbose command output should not compete with an animated terminal line.
+    isEnabled: !options.verbose && Boolean(process.stderr.isTTY),
+  }).start();
 
   try {
-    const imageReferences =
-      asset.kind === "video"
-        ? await extractFramesForAsset(asset, options)
-        : [asset.path];
+    return await Promise.all(
+      assets.map((asset) => limit(async () => {
+        const result = await processAsset(asset);
+        completed += 1;
+        const detail = result.error
+          ? `Failed ${formatPath(asset.path)}`
+          : result.keywords
+            ? `${formatPath(asset.path)} ${pc.dim(`=> ${result.keywords.join(", ")}`)}`
+            : `${formatPath(asset.path)} ${pc.dim(options.dryRun
+                ? "would clean generated metadata"
+                : "cleaned generated metadata")}`;
 
-    if (asset.kind === "video") {
-      tempDir = path.dirname(imageReferences[0]);
-    }
+        // Only this batch owns a spinner; workers return results without starting one.
+        spinner.stopAndPersist({
+          symbol: result.error ? pc.red("✖") : pc.green("✔"),
+          text: detail,
+        });
+        spinner.text = `${action} media: ${completed}/${assets.length} completed`;
+        if (completed < assets.length) {
+          spinner.start();
+        }
+        return result;
+      })),
+    );
+  } finally {
+    spinner.stop();
+  }
+}
 
-    const inferredKeywords = await inferKeywordsFromImages(imageReferences, {
+async function indexAsset(
+  asset: MediaAsset,
+  options: IndexOptions,
+): Promise<ProcessResult> {
+
+  try {
+    const keywords = await inferKeywordsFromMedia(asset.path, {
       model: options.model,
     });
-    const keywords =
-      asset.kind === "video"
-        ? appendAudioKeywords(
-            inferredKeywords,
-            await videoHasAudioStream(asset.path, options.verbose),
-          )
-        : inferredKeywords;
 
     if (!options.dryRun) {
       await embedMetadata(asset.path, keywords, {
@@ -161,21 +246,12 @@ async function tagAsset(
       });
     }
 
-    spinner.succeed(
-      `${formatPath(asset.path)} ${pc.dim(`=> ${keywords.join(", ")}`)}`,
-    );
-
     return { asset, keywords };
   } catch (error) {
-    spinner.fail(`Failed ${formatPath(asset.path)}`);
     return {
       asset,
       error: error instanceof Error ? error : new Error(String(error)),
     };
-  } finally {
-    if (tempDir && !options.keepFrames) {
-      await removeExtractedFrames(tempDir);
-    }
   }
 }
 
@@ -183,7 +259,6 @@ async function cleanAsset(
   asset: MediaAsset,
   options: CleanOptions,
 ): Promise<ProcessResult> {
-  const spinner = ora(`Cleaning ${formatPath(asset.path)}`).start();
 
   try {
     if (!options.dryRun) {
@@ -193,15 +268,8 @@ async function cleanAsset(
       });
     }
 
-    spinner.succeed(
-      options.dryRun
-        ? `${formatPath(asset.path)} ${pc.dim("would clean generated metadata")}`
-        : `${formatPath(asset.path)} ${pc.dim("cleaned generated metadata")}`,
-    );
-
     return { asset };
   } catch (error) {
-    spinner.fail(`Failed ${formatPath(asset.path)}`);
     return {
       asset,
       error: error instanceof Error ? error : new Error(String(error)),
@@ -209,30 +277,12 @@ async function cleanAsset(
   }
 }
 
-async function extractFramesForAsset(
-  asset: MediaAsset,
-  options: TagOptions,
-): Promise<string[]> {
-  const { framePaths, tempDir } = await extractVideoFrames(
-    asset.path,
-    options.verbose,
-    options.frames,
-  );
-
-  if (options.keepFrames) {
-    console.log(pc.dim(`Kept extracted frames in ${tempDir}`));
-  }
-
-  return framePaths;
-}
-
-async function preflightTag(assets: MediaAsset[], options: TagOptions): Promise<void> {
+async function preflightIndex(options: IndexOptions): Promise<void> {
   const spinner = ora("Checking required tools").start();
   await assertCommandAvailable("which");
 
-  if (assets.some((asset) => asset.kind === "video")) {
-    await assertCommandAvailable("ffprobe");
-    await assertCommandAvailable("ffmpeg");
+  if (!process.env.GEMINI_API_KEY?.trim()) {
+    throw new Error("GEMINI_API_KEY is required for Gemini inference.");
   }
 
   if (!options.dryRun) {
