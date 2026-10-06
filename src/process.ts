@@ -10,6 +10,7 @@ export type CommandResult = {
 
 export type RunCommandOptions = {
   verbose?: boolean;
+  acceptedExitCodes?: number[];
 };
 
 export class CommandError extends Error {
@@ -41,7 +42,10 @@ export async function runCommand(
 
     return { stdout, stderr };
   } catch (error) {
-    const err = error as NodeJS.ErrnoException & { stderr?: string };
+    const err = error as Error & { code?: string | number; stdout?: string; stderr?: string };
+    if (typeof err.code === "number" && options.acceptedExitCodes?.includes(err.code)) {
+      return { stdout: err.stdout ?? "", stderr: err.stderr ?? "" };
+    }
     const stderr = typeof err.stderr === "string" ? err.stderr.trim() : undefined;
     throw new CommandError(
       stderr || err.message || `Command failed: ${command}`,

@@ -15,6 +15,7 @@ import {
 import { cleanMetadata, embedMetadata, inspectMetadata, hasKeywordMetadata, type InspectMetadataOptions } from "./metadata.js";
 import { assertCommandAvailable } from "./process.js";
 import { renderInspectionTable, type AssetInspectionRow } from "./table.js";
+import { inspectMetadataBatch } from "./inspection.js";
 
 type IndexOptions = {
   concurrency: number;
@@ -149,13 +150,18 @@ async function runInspect(
   }
 
   await assertCommandAvailable("exiftool");
+  const results = await inspectMetadataBatch(assets.map((asset) => asset.path), {
+    keywords: !options.all || options.keywords,
+    verbose: options.verbose,
+  });
   const summary: AssetInspectionRow[] = [];
-  for (const asset of assets) {
+  for (const [index, asset] of assets.entries()) {
     try {
-      const rows = await inspectMetadata(asset.path, {
-        keywords: !options.all || options.keywords,
-        verbose: options.verbose,
-      });
+      const result = results[index];
+      if (result.error) {
+        throw result.error;
+      }
+      const rows = result.rows ?? [];
       if (options.all) {
         console.log(pc.bold(`\n${formatPath(asset.path)} (${asset.kind})`));
         if (rows.length === 0) {

@@ -134,6 +134,10 @@ export async function inspectMetadata(
 export function parseMetadataRows(exiftoolJson: string): MetadataRow[] {
   const [metadata] = z.array(z.record(z.string(), z.unknown())).length(1)
     .parse(JSON.parse(exiftoolJson));
+  return parseMetadataRecord(metadata);
+}
+
+export function parseMetadataRecord(metadata: Record<string, unknown>): MetadataRow[] {
   const rows: MetadataRow[] = [];
   for (const [key, value] of Object.entries(metadata)) {
     if (key === "SourceFile") {

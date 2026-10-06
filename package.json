@@ -1,6 +1,6 @@
 {
   "name": "media-tag",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Generate searchable keywords for local images and videos with AI, and inspect their embedded metadata.",
   "type": "module",
   "packageManager": "pnpm@11.19.0",
