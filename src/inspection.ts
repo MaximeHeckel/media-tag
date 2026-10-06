@@ -1,3 +1,4 @@
+import { checkCancellation } from "./cancellation.js";
 import path from "node:path";
 import pLimit from "p-limit";
 import { z } from "zod";
@@ -47,6 +48,7 @@ export async function inspectMetadataBatch(
 
   const limit = pLimit(3);
   const results = await Promise.all(batches.map((batch) => limit(async () => {
+    checkCancellation();
     try {
       const args = buildInspectMetadataArgs(batch[0], options);
       args.pop();
@@ -56,8 +58,10 @@ export async function inspectMetadataBatch(
         // A failed file sets exit code 1 even when other files returned valid JSON.
         acceptedExitCodes: [1],
       });
+      checkCancellation();
       return parseInspectionResults(stdout, batch);
     } catch (error) {
+      checkCancellation();
       return batch.map((filePath) => ({
         path: filePath,
         error: error instanceof Error ? error : new Error(String(error)),

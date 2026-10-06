@@ -93,7 +93,7 @@ describe("Gemini media inference", () => {
     await expect(inferKeywordsFromMedia("/tmp/clip.mp4", { apiKey: "test-key" }))
       .resolves.toEqual(["neon blue", "camera orbit", "no-audio", "no-music"]);
     expect(mocks.upload).toHaveBeenCalledWith({
-      file: "/tmp/clip.mp4", config: { mimeType: "video/mp4" },
+      file: "/tmp/clip.mp4", config: { mimeType: "video/mp4", abortSignal: expect.any(AbortSignal) },
     });
     expect(mocks.generateContent).toHaveBeenCalledWith(expect.objectContaining({
       model: "gemini-3.8-flash",
@@ -103,6 +103,43 @@ describe("Gemini media inference", () => {
       config: expect.objectContaining({ responseMimeType: "application/json" }),
     }));
     expect(mocks.delete).toHaveBeenCalledWith({ name: "files/test" });
+  });
+
+  it("does not upload when cancelled before inference starts", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("Cancelled."));
+    await expect(inferKeywordsFromMedia("/tmp/clip.mp4", {
+      apiKey: "test-key", signal: controller.signal,
+    })).rejects.toThrow("Cancelled.");
+    expect(mocks.upload).not.toHaveBeenCalled();
+  });
+
+  it("cancels an active request and attempts bounded upload cleanup", async () => {
+    const controller = new AbortController();
+    mocks.generateContent.mockImplementation(({ config }) => new Promise((_, reject) => {
+      config.abortSignal.addEventListener("abort", () => reject(config.abortSignal.reason), { once: true });
+      controller.abort(new Error("Cancelled."));
+    }));
+    await expect(inferKeywordsFromMedia("/tmp/clip.mp4", {
+      apiKey: "test-key", signal: controller.signal,
+    })).rejects.toThrow("Cancelled.");
+    expect(mocks.delete).toHaveBeenCalledWith({
+      name: "files/test", config: { abortSignal: expect.any(AbortSignal) },
+    });
+  });
+
+  it("does not generate keywords if cancelled during upload processing", async () => {
+    const controller = new AbortController();
+    mocks.upload.mockImplementation(async () => {
+      controller.abort(new Error("Cancelled."));
+      return { name: "files/test", state: "PROCESSING" };
+    });
+    await expect(inferKeywordsFromMedia("/tmp/clip.mp4", {
+      apiKey: "test-key", signal: controller.signal,
+    })).rejects.toThrow("Cancelled.");
+    expect(mocks.get).not.toHaveBeenCalled();
+    expect(mocks.generateContent).not.toHaveBeenCalled();
+    expect(mocks.delete).toHaveBeenCalledOnce();
   });
 
   it("preserves descriptive audio terms alongside the visual keyword budget", async () => {
@@ -138,7 +175,7 @@ describe("Gemini media inference", () => {
     mocks.generateContent.mockResolvedValue({ text: '{"keywords":["neon blue"]}' });
     await inferKeywordsFromMedia("/tmp/image.webp", { apiKey: "test-key", model: "custom-model" });
     expect(mocks.upload).toHaveBeenCalledWith({
-      file: "/tmp/image.webp", config: { mimeType: "image/webp" },
+      file: "/tmp/image.webp", config: { mimeType: "image/webp", abortSignal: expect.any(AbortSignal) },
     });
     expect(mocks.generateContent).toHaveBeenCalledWith(expect.objectContaining({ model: "custom-model" }));
   });
@@ -147,7 +184,7 @@ describe("Gemini media inference", () => {
     mocks.upload.mockResolvedValue({ name: "files/test", state: "PROCESSING" });
     mocks.get.mockResolvedValue({ name: "files/test", uri: "https://example.com/file", state: "ACTIVE" });
     await inferKeywordsFromMedia("/tmp/clip.mp4", { apiKey: "test-key" });
-    expect(mocks.get).toHaveBeenCalledWith({ name: "files/test" });
+    expect(mocks.get).toHaveBeenCalledWith({ name: "files/test", config: { abortSignal: expect.any(AbortSignal) } });
     expect(mocks.generateContent).toHaveBeenCalledOnce();
   });
 

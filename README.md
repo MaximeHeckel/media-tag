@@ -21,7 +21,15 @@ GEMINI_API_KEY=your_api_key_here
 GEMINI_MODEL=gemini-3.8-flash
 ```
 
-The CLI loads `.env` from your current working directory. `GEMINI_MODEL` is optional; the default is `gemini-3.8-flash`. Only `index` requires an API key.
+For an installed executable that works from any folder, save these settings in `~/.config/media-tag/.env`:
+
+```bash
+mkdir -p ~/.config/media-tag
+cp .env ~/.config/media-tag/.env
+chmod 600 ~/.config/media-tag/.env
+```
+
+Existing environment variables take priority, followed by `.env` in your current working directory, then `~/.config/media-tag/.env`. If `XDG_CONFIG_HOME` is set, the user config lives at `$XDG_CONFIG_HOME/media-tag/.env` instead. Keys are read at runtime and are not bundled into the executable. `GEMINI_MODEL` is optional; the default is `gemini-3.8-flash`. Only `index` requires an API key.
 
 Supported formats: **PNG, JPG, JPEG, WebP, MP4, and MOV**. Commands accept files, directories (searched recursively), multiple inputs, and quoted globs.
 

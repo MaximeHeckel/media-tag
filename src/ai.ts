@@ -1,3 +1,4 @@
+import { cancellationSignal } from "./cancellation.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { GoogleGenAI, type File as GeminiFile } from "@google/genai";
 import { z } from "zod";
@@ -32,12 +33,15 @@ export const VideoKeywordResponseSchema = KeywordResponseSchema.extend({
 export type InferKeywordsOptions = {
   apiKey?: string;
   model?: string;
+  signal?: AbortSignal;
 };
 
 export async function inferKeywordsFromMedia(
   mediaPath: string,
   options: InferKeywordsOptions = {},
 ): Promise<string[]> {
+  const signal = options.signal ?? cancellationSignal;
+  signal.throwIfAborted();
   const input = InferKeywordsInputSchema.parse({
     mediaPath,
     apiKey: options.apiKey ?? process.env.GEMINI_API_KEY,
@@ -57,7 +61,7 @@ export async function inferKeywordsFromMedia(
   });
   const uploaded = await gemini.files.upload({
     file: input.mediaPath,
-    config: { mimeType },
+    config: { mimeType, abortSignal: signal },
   });
 
   const fileName = uploaded.name;
@@ -66,7 +70,7 @@ export async function inferKeywordsFromMedia(
   }
 
   try {
-    const file = await waitForActiveFile(gemini, uploaded, fileName);
+    const file = await waitForActiveFile(gemini, uploaded, fileName, signal);
     if (!file.uri) {
       throw new Error("Gemini upload returned no file URI.");
     }
@@ -85,6 +89,7 @@ export async function inferKeywordsFromMedia(
         ],
       }],
       config: {
+        abortSignal: signal,
         systemInstruction:
           "You tag stock footage and images. Return concise, searchable lowercase keywords describing style, objects, colors, mood, composition, medium, notable visual attributes, art style, design style, design movement, era, and broader umbrella aesthetic terms when relevant. For videos, also assess the audible content. Return only the requested structured object.",
         responseMimeType: "application/json",
@@ -92,6 +97,7 @@ export async function inferKeywordsFromMedia(
       },
     });
 
+    signal.throwIfAborted();
     if (!response.text) {
       throw new Error("Gemini returned no keyword response.");
     }
@@ -114,9 +120,13 @@ export async function inferKeywordsFromMedia(
   } finally {
     // Cleanup must not hide inference errors or discard successfully generated tags.
     try {
-      await gemini.files.delete({ name: fileName });
+      await gemini.files.delete({
+        name: fileName,
+        // Still attempt upload cleanup on cancellation, but do not delay exit.
+        ...(signal.aborted ? { config: { abortSignal: AbortSignal.timeout(1000) } } : {}),
+      });
     } catch {
-      console.error("Warning: unable to delete the temporary Gemini upload; Google expires uploaded files automatically after 48 hours.");
+      if (!signal.aborted) console.error("Warning: unable to delete the temporary Gemini upload; Google expires uploaded files automatically after 48 hours.");
     }
   }
 }
@@ -125,7 +135,9 @@ async function waitForActiveFile(
   gemini: GoogleGenAI,
   uploaded: GeminiFile,
   fileName: string,
+  signal: AbortSignal,
 ): Promise<GeminiFile> {
+  signal.throwIfAborted();
   const deadline = Date.now() + PROCESSING_TIMEOUT_MS;
   let file = uploaded;
 
@@ -133,10 +145,11 @@ async function waitForActiveFile(
     if (Date.now() >= deadline) {
       throw new Error("Timed out waiting for Gemini to process the media upload.");
     }
-    await delay(POLL_INTERVAL_MS);
-    file = await gemini.files.get({ name: fileName });
+    await delay(POLL_INTERVAL_MS, undefined, { signal });
+    file = await gemini.files.get({ name: fileName, config: { abortSignal: signal } });
   }
 
+  signal.throwIfAborted();
   if (file.state !== "ACTIVE") {
     throw new Error(`Gemini media processing failed (state: ${file.state ?? "unknown"}).`);
   }

@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
-import "dotenv/config";
+import { getUserConfigPath, loadConfiguration } from "./config.js";
 import packageInfo from "../package.json" with { type: "json" };
 import path from "node:path";
 import { Command, InvalidArgumentError } from "commander";
-import ora from "ora";
+import ora, { type Ora, type Options as SpinnerOptions } from "ora";
+import { cancellation, checkCancellation } from "./cancellation.js";
 import pLimit from "p-limit";
 import pc from "picocolors";
 import { inferKeywordsFromMedia } from "./ai.js";
@@ -16,6 +17,8 @@ import { cleanMetadata, embedMetadata, inspectMetadata, hasKeywordMetadata, type
 import { assertCommandAvailable } from "./process.js";
 import { renderInspectionTable, type AssetInspectionRow } from "./table.js";
 import { inspectMetadataBatch } from "./inspection.js";
+
+loadConfiguration();
 
 type IndexOptions = {
   concurrency: number;
@@ -99,11 +102,46 @@ program
     }
   });
 
-await program.parseAsync();
+const spinners = new Set<Ora>();
+function createSpinner(options: string | SpinnerOptions): Ora {
+  const spinner = ora({
+    ...(typeof options === "string" ? { text: options } : options),
+    // Keep normal terminal signal handling instead of consuming stdin in raw mode.
+    discardStdin: false,
+  });
+  spinners.add(spinner);
+  return spinner;
+}
+
+function cancel(): void {
+  if (cancellation.signal.aborted) {
+    process.exit(130);
+  }
+  cancellation.abort(new Error("Cancelled."));
+  for (const spinner of spinners) spinner.stop();
+  console.error(pc.yellow("Cancelled."));
+  process.exitCode = 130;
+  // Bound shutdown even if a dependency does not honor its abort signal.
+  setTimeout(() => process.exit(130), 3000);
+}
+
+process.on("SIGINT", cancel);
+try {
+  await program.parseAsync();
+} finally {
+  for (const spinner of spinners) spinner.stop();
+  if (cancellation.signal.aborted) {
+    // SDK connections or stdin handles may survive aborted work. Exit explicitly
+    // once the command has unwound so the terminal receives control again.
+    process.exit(130);
+  }
+  process.off("SIGINT", cancel);
+}
 
 async function runIndex(inputs: string[], options: IndexOptions): Promise<void> {
-  const discoverySpinner = ora("Resolving media inputs").start();
+  const discoverySpinner = createSpinner("Resolving media inputs").start();
   const assets = await resolveInputAssets(inputs);
+  checkCancellation();
   discoverySpinner.succeed(`Resolved ${assets.length} supported asset(s)`);
 
   if (assets.length === 0) {
@@ -121,8 +159,9 @@ async function runIndex(inputs: string[], options: IndexOptions): Promise<void> 
 }
 
 async function runClean(inputs: string[], options: CleanOptions): Promise<void> {
-  const discoverySpinner = ora("Resolving media inputs").start();
+  const discoverySpinner = createSpinner("Resolving media inputs").start();
   const assets = await resolveInputAssets(inputs);
+  checkCancellation();
   discoverySpinner.succeed(`Resolved ${assets.length} supported asset(s)`);
 
   if (assets.length === 0) {
@@ -144,6 +183,7 @@ async function runInspect(
   options: InspectMetadataOptions & { all: boolean },
 ): Promise<void> {
   const assets = await resolveInputAssets(inputs);
+  checkCancellation();
   if (assets.length === 0) {
     console.log(pc.yellow("No supported media files found."));
     return;
@@ -202,7 +242,7 @@ async function processBatch(
 ): Promise<ProcessResult[]> {
   const limit = pLimit(options.concurrency);
   let completed = 0;
-  const spinner = ora({
+  const spinner = createSpinner({
     text: `${action} media: 0/${assets.length} completed`,
     // Verbose command output should not compete with an animated terminal line.
     isEnabled: !options.verbose && Boolean(process.stderr.isTTY),
@@ -211,7 +251,9 @@ async function processBatch(
   try {
     return await Promise.all(
       assets.map((asset) => limit(async () => {
+        checkCancellation();
         const result = await processAsset(asset);
+        checkCancellation();
         completed += 1;
         const detail = result.error
           ? `Failed ${formatPath(asset.path)}`
@@ -269,6 +311,7 @@ async function indexAsset(
 
     return { asset, keywords };
   } catch (error) {
+    checkCancellation();
     return {
       asset,
       error: error instanceof Error ? error : new Error(String(error)),
@@ -291,6 +334,7 @@ async function cleanAsset(
 
     return { asset };
   } catch (error) {
+    checkCancellation();
     return {
       asset,
       error: error instanceof Error ? error : new Error(String(error)),
@@ -299,11 +343,11 @@ async function cleanAsset(
 }
 
 async function preflightIndex(options: IndexOptions): Promise<void> {
-  const spinner = ora("Checking required tools").start();
+  const spinner = createSpinner("Checking required tools").start();
   await assertCommandAvailable("which");
 
   if (!process.env.GEMINI_API_KEY?.trim()) {
-    throw new Error("GEMINI_API_KEY is required for Gemini inference.");
+    throw new Error(`GEMINI_API_KEY is required. Set it in your environment, a local .env, or ${getUserConfigPath()}.`);
   }
 
   if (!options.dryRun || options.skipExisting) {
@@ -317,7 +361,7 @@ async function preflightIndex(options: IndexOptions): Promise<void> {
 }
 
 async function preflightClean(options: CleanOptions): Promise<void> {
-  const spinner = ora("Checking required tools").start();
+  const spinner = createSpinner("Checking required tools").start();
   await assertCommandAvailable("which");
 
   if (!options.dryRun) {
@@ -354,6 +398,7 @@ function reportResults(results: ProcessResult[]): void {
 }
 
 function handleFatalError(error: unknown): void {
+  if (cancellation.signal.aborted) return;
   const message = error instanceof Error ? error.message : String(error);
   console.error(pc.red(`Error: ${message}`));
   process.exitCode = 1;
