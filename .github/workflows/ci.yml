@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          cache: true
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check TypeScript
+        run: pnpm typecheck
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Build JavaScript
+        run: pnpm build
+
+      - name: Check Node CLI entry point
+        run: |
+          node dist/src/index.js --version
+          node dist/src/index.js --help
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Compile standalone executable
+        run: pnpm compile
+
+      - name: Check standalone CLI entry point
+        run: |
+          ./media-tag --version
+          ./media-tag --help
