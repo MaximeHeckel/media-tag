@@ -12,12 +12,13 @@ import {
   type MediaAsset,
   resolveInputAssets,
 } from "./media.js";
-import { cleanMetadata, embedMetadata, inspectMetadata, type InspectMetadataOptions } from "./metadata.js";
+import { cleanMetadata, embedMetadata, inspectMetadata, hasKeywordMetadata, type InspectMetadataOptions } from "./metadata.js";
 import { assertCommandAvailable } from "./process.js";
 import { renderInspectionTable, type AssetInspectionRow } from "./table.js";
 
 type IndexOptions = {
   concurrency: number;
+  skipExisting: boolean;
   model?: string;
   dryRun: boolean;
   reindex: boolean;
@@ -33,6 +34,7 @@ type CleanOptions = {
 
 type ProcessResult = {
   asset: MediaAsset;
+  skipped?: boolean;
   keywords?: string[];
   error?: Error;
 };
@@ -53,6 +55,7 @@ program
   .argument("<inputs...>", "files, directories, or glob patterns to process")
   .option("-c, --concurrency <n>", "maximum active workers", parseConcurrency, 3)
   .option("--model <model>", "Gemini model to use", process.env.GEMINI_MODEL)
+  .option("--skip-existing", "skip assets with non-empty keyword metadata", false)
   .option("--dry-run", "print keywords without writing metadata", false)
   .option("--no-reindex", "skip macOS Spotlight reindexing")
   .option("--verbose", "print external command details", false)
@@ -206,6 +209,8 @@ async function processBatch(
         completed += 1;
         const detail = result.error
           ? `Failed ${formatPath(asset.path)}`
+          : result.skipped
+            ? `${formatPath(asset.path)} ${pc.dim("skipped: keyword metadata already exists")}`
           : result.keywords
             ? `${formatPath(asset.path)} ${pc.dim(`=> ${result.keywords.join(", ")}`)}`
             : `${formatPath(asset.path)} ${pc.dim(options.dryRun
@@ -214,7 +219,7 @@ async function processBatch(
 
         // Only this batch owns a spinner; workers return results without starting one.
         spinner.stopAndPersist({
-          symbol: result.error ? pc.red("✖") : pc.green("✔"),
+          symbol: result.error ? pc.red("✖") : result.skipped ? pc.yellow("−") : pc.green("✔"),
           text: detail,
         });
         spinner.text = `${action} media: ${completed}/${assets.length} completed`;
@@ -235,6 +240,16 @@ async function indexAsset(
 ): Promise<ProcessResult> {
 
   try {
+    if (options.skipExisting) {
+      const rows = await inspectMetadata(asset.path, {
+        keywords: true,
+        verbose: options.verbose,
+      });
+      if (hasKeywordMetadata(asset.path, rows)) {
+        return { asset, skipped: true };
+      }
+    }
+
     const keywords = await inferKeywordsFromMedia(asset.path, {
       model: options.model,
     });
@@ -285,12 +300,11 @@ async function preflightIndex(options: IndexOptions): Promise<void> {
     throw new Error("GEMINI_API_KEY is required for Gemini inference.");
   }
 
-  if (!options.dryRun) {
+  if (!options.dryRun || options.skipExisting) {
     await assertCommandAvailable("exiftool");
-
-    if (options.reindex && process.platform === "darwin") {
-      await assertCommandAvailable("mdimport");
-    }
+  }
+  if (!options.dryRun && options.reindex && process.platform === "darwin") {
+    await assertCommandAvailable("mdimport");
   }
 
   spinner.succeed("Required tools are available");
@@ -313,11 +327,12 @@ async function preflightClean(options: CleanOptions): Promise<void> {
 
 function reportResults(results: ProcessResult[]): void {
   const failures = results.filter((result) => result.error);
-  const successes = results.length - failures.length;
+  const skipped = results.filter((result) => result.skipped).length;
+  const successes = results.length - failures.length - skipped;
 
   console.log(
     pc.bold(
-      `\nDone. ${pc.green(`${successes} succeeded`)}, ${failures.length ? pc.red(`${failures.length} failed`) : pc.green("0 failed")}.`,
+      `\nDone. ${pc.green(`${successes} succeeded`)}${skipped ? `, ${pc.yellow(`${skipped} skipped`)}` : ""}, ${failures.length ? pc.red(`${failures.length} failed`) : pc.green("0 failed")}.`,
     ),
   );
 

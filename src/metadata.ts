@@ -89,6 +89,18 @@ export type MetadataRow = {
   Value: string;
 };
 
+export function hasKeywordMetadata(filePath: string, rows: MetadataRow[]): boolean {
+  const fields = VIDEO_EXTENSIONS.has(path.extname(filePath).toLowerCase())
+    ? new Set(["Keys:Description", "XMP-dc:Description"])
+    : new Set(["IPTC:Keywords", "XMP-dc:Subject"]);
+
+  return rows.some((row) => {
+    // Family 4 adds instance identifiers for duplicate fields.
+    const relevant = row.Group.split(":").some((group) => fields.has(`${group}:${row.Field}`));
+    return relevant && row.Value !== "—" && row.Value.replace(/[,\s]/g, "").length > 0;
+  });
+}
+
 export function buildInspectMetadataArgs(
   filePath: string,
   options: InspectMetadataOptions = {},

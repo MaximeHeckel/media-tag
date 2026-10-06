@@ -31,9 +31,12 @@ Generate keywords and write them to embedded metadata:
 
 ```bash
 pnpm dev index ./downloads
+pnpm dev index ./downloads --skip-existing
 pnpm dev index ./image.jpg ./clip.mp4 --dry-run
 pnpm dev index "./downloads/**/*.mp4"
 ```
+
+`--skip-existing` skips assets with non-empty values in either keyword metadata field before contacting Gemini. Other metadata, such as camera settings, does not cause a skip. This also applies during dry runs and requires ExifTool.
 
 Inspect keywords in one table, with each asset on its own row:
 
@@ -57,6 +60,7 @@ pnpm dev clean ./downloads
 | `--dry-run` | `index`, `clean` | Preview without modifying files |
 | `-c, --concurrency <n>` | `index`, `clean` | Concurrent workers; default: 3 |
 | `--model <model>` | `index` | Override the Gemini model |
+| `--skip-existing` | `index` | Skip assets that already have keyword metadata |
 | `--no-reindex` | `index`, `clean` | Skip macOS Spotlight reindexing |
 | `--all` | `inspect` | Show full metadata per file |
 | `--keywords` | `inspect` | Show keyword metadata; the default |

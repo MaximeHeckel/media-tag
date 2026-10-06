@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCleanMetadataArgs, buildExiftoolArgs, buildInspectMetadataArgs, parseMetadataRows } from "../src/metadata.js";
+import { buildCleanMetadataArgs, buildExiftoolArgs, buildInspectMetadataArgs, parseMetadataRows, hasKeywordMetadata } from "../src/metadata.js";
 
 describe("buildExiftoolArgs", () => {
   it("builds in-place video metadata args", () => {
@@ -56,6 +56,34 @@ describe("buildCleanMetadataArgs", () => {
 });
 
 describe("metadata inspection", () => {
+  it("recognizes either keyword field for images and videos", () => {
+    expect(hasKeywordMetadata("/tmp/image.jpg", parseMetadataRows(
+      '[{"IPTC:Keywords":["neon blue"]}]',
+    ))).toBe(true);
+    expect(hasKeywordMetadata("/tmp/image.webp", parseMetadataRows(
+      '[{"XMP-dc:Subject":["glass"]}]',
+    ))).toBe(true);
+    expect(hasKeywordMetadata("/tmp/clip.mp4", parseMetadataRows(
+      '[{"Keys:Description":"neon blue, camera orbit"}]',
+    ))).toBe(true);
+    expect(hasKeywordMetadata("/tmp/clip.MOV", parseMetadataRows(
+      '[{"XMP-dc:Copy1:Description":"music"}]',
+    ))).toBe(true);
+  });
+
+  it("ignores empty keyword fields and unrelated metadata", () => {
+    expect(hasKeywordMetadata("/tmp/image.jpg", parseMetadataRows(
+      '[{"IPTC:Keywords":[" ",""],"XMP-dc:Subject":null,"ExifIFD:ISO":100}]',
+    ))).toBe(false);
+    expect(hasKeywordMetadata("/tmp/clip.mp4", parseMetadataRows(
+      '[{"Keys:Description":" ","XMP-dc:Description":"","ExifTool:Warning":"Example warning"}]',
+    ))).toBe(false);
+    expect(hasKeywordMetadata("/tmp/image.jpg", parseMetadataRows(
+      '[{"XMP-dc:Description":"An unrelated caption"}]',
+    ))).toBe(false);
+    expect(hasKeywordMetadata("/tmp/clip.mp4", [])).toBe(false);
+  });
+
   it("reads all grouped metadata without write arguments", () => {
     expect(buildInspectMetadataArgs("/tmp/clip.mov")).toEqual([
       "-json", "-G1:4", "-s", "/tmp/clip.mov",
